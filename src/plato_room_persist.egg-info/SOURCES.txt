@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+src/plato_room_persist/__init__.py
+src/plato_room_persist/persist.py
+src/plato_room_persist.egg-info/PKG-INFO
+src/plato_room_persist.egg-info/SOURCES.txt
+src/plato_room_persist.egg-info/dependency_links.txt
+src/plato_room_persist.egg-info/top_level.txt
