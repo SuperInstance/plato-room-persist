@@ -1,0 +1,10 @@
+[package]
+name = "plato-room-persist"
+version = "0.1.0"
+edition = "2021"
+description = "Append-only storage engine for PLATO rooms — mmap reads, WAL writes, snapshot/restore"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
