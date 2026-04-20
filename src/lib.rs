@@ -26,6 +26,7 @@
 //! For rooms that need relational queries, we'd add SQLite as a backend.
 
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::collections::HashMap;
 
 /// A persisted record.
@@ -77,14 +78,14 @@ pub struct RoomPersist {
     snapshots: Vec<HashMap<String, Record>>,
     sequence: u64,
     total_writes: u64,
-    total_reads: u64,
+    total_reads: Cell<u64>,
     deleted_keys: HashMap<String, f64>,  // key → delete timestamp
 }
 
 impl RoomPersist {
     pub fn new(config: PersistConfig) -> Self {
         Self { config, data: HashMap::new(), wal: Vec::new(),
-               snapshots: Vec::new(), sequence: 0, total_writes: 0, total_reads: 0,
+               snapshots: Vec::new(), sequence: 0, total_writes: 0, total_reads: Cell::new(0),
                deleted_keys: HashMap::new() }
     }
 
@@ -127,13 +128,13 @@ impl RoomPersist {
 
     /// Get a record by key.
     pub fn get(&self, key: &str) -> Option<&Record> {
-        self.total_reads += 1;
+        self.total_reads.set(self.total_reads.get() + 1);
         self.data.get(key)
     }
 
     /// Get multiple records.
     pub fn get_batch(&self, keys: &[String]) -> Vec<&Record> {
-        self.total_reads += keys.len() as u64;
+        self.total_reads.set(self.total_reads.get() + keys.len() as u64);
         keys.iter().filter_map(|k| self.data.get(k)).collect()
     }
 
@@ -184,18 +185,16 @@ impl RoomPersist {
     pub fn compact(&mut self) -> CompactionResult {
         let before = self.wal.len();
         // Keep only the latest entry per key + snapshots
-        let mut latest: HashMap<String, &WalEntry> = HashMap::new();
-        for entry in &self.wal {
+        let old_wal = std::mem::take(&mut self.wal);
+        let mut latest: HashMap<String, WalEntry> = HashMap::new();
+        for entry in old_wal {
             if entry.record.operation == Operation::Snapshot {
-                continue; // always keep snapshots
+                self.wal.push(entry); // always keep snapshots
+            } else {
+                latest.insert(entry.record.key.clone(), entry);
             }
-            latest.insert(entry.record.key.clone(), entry);
         }
-        let snapshots: Vec<WalEntry> = self.wal.iter()
-            .filter(|e| e.record.operation == Operation::Snapshot)
-            .cloned().collect();
-        self.wal = snapshots;
-        self.wal.extend(latest.values().cloned());
+        self.wal.extend(latest.into_values());
         self.wal.sort_by_key(|e| e.sequence);
         let after = self.wal.len();
         CompactionResult { entries_removed: before - after, entries_kept: after,
@@ -249,7 +248,7 @@ impl RoomPersist {
             snapshots: self.snapshots.len(),
             deleted_keys: self.deleted_keys.len(),
             total_writes: self.total_writes,
-            total_reads: self.total_reads,
+            total_reads: self.total_reads.get(),
             rooms: self.count_by_room(),
         }
     }
@@ -323,7 +322,7 @@ mod tests {
     fn test_compaction() {
         let mut store = RoomPersist::new(PersistConfig::default());
         for i in 0..100 {
-            store.put(&format!("{}", i), &format!("key-{}", i), &format!("val-{}", i), "room", HashMap::new());
+            store.put(&format!("{}", i), "shared-key", &format!("val-{}", i), "room", HashMap::new());
         }
         let result = store.compact();
         assert!(result.entries_removed > 0);
